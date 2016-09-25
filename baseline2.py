@@ -142,17 +142,18 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
       minDistance = min([self.getMazeDistance(myPos, food) for food in foodList])
       features['distanceToFood'] = minDistance
 
-    # get distance to middle point
+    # get distance to home-side
     midX = int(self.map.width / 2 - self.red) 
     yaxis = range(0, self.map.height)
     ywall = []
-    #check for walls and record
+    #check for walls and record them
     for y in yaxis:
       if self.map[midX][y]:
         ywall.append(y)
-    # remove walls
+    # remove walls from yaxis
     for y in ywall:
       yaxis.remove(y)
+    # search for the closest sqaure on the home-side
     minDistance = 9999
     for y in yaxis:
       newDistance = self.getMazeDistance(myPos, (midX, y))
@@ -169,6 +170,8 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
         continue
       # if enemy is a white ghost
         # continue
+      # if we're on our side of the board, 
+      # or the pacman is on our side of the board, continue
       if self.red:
         if myPos[0] <= midX or enemyPos[0] <= midX:
           continue
@@ -189,7 +192,7 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
     return {'successorScore': 100, 
             'distanceToFood': -1.0, 
             'distanceToMid': -numFoodCarrying/1.7,
-            'distanceToEnemy': -(1.0 + numFoodCarrying)
+            'distanceToEnemy': -(1.0 + numFoodCarrying) # we are more scared if we've got a big payload
             }
 
 class DefensiveReflexAgent(ReflexCaptureAgent):
