@@ -1,5 +1,5 @@
-# myTeam.py
-# ---------
+# baselineTeam.py
+# ---------------
 # Licensing Information:  You are free to use or extend these projects for
 # educational purposes provided that (1) you do not distribute or publish
 # solutions, (2) you retain this notice, and (3) you provide clear
@@ -11,6 +11,14 @@
 # Student side autograding was added by Brad Miller, Nick Hay, and
 # Pieter Abbeel (pabbeel@cs.berkeley.edu).
 
+
+# baselineTeam.py
+# ---------------
+# Licensing Information: Please do not distribute or publish solutions to this
+# project. You are free to use and extend these projects for educational
+# purposes. The Pacman AI projects were developed at UC Berkeley, primarily by
+# John DeNero (denero@cs.berkeley.edu) and Dan Klein (klein@cs.berkeley.edu).
+# For more info, see http://inst.eecs.berkeley.edu/~cs188/sp09/pacman.html
 
 from captureAgents import CaptureAgent
 import distanceCalculator
@@ -53,11 +61,6 @@ class ReflexCaptureAgent(CaptureAgent):
   def registerInitialState(self, gameState):
     self.start = gameState.getAgentPosition(self.index)
     CaptureAgent.registerInitialState(self, gameState)
-    self.map = gameState.getWalls()
-    if self.red:
-      self.enemyIndex = gameState.getBlueTeamIndices()
-    else:
-      self.enemyIndex = gameState.getRedTeamIndices()
 
   def chooseAction(self, gameState):
     """
@@ -137,58 +140,15 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
     features['successorScore'] = -len(foodList)#self.getScore(successor)
 
     # Compute distance to the nearest food
+
     if len(foodList) > 0: # This should always be True,  but better safe than sorry
       myPos = successor.getAgentState(self.index).getPosition()
       minDistance = min([self.getMazeDistance(myPos, food) for food in foodList])
       features['distanceToFood'] = minDistance
-
-    # get distance to middle point
-    midX = int(self.map.width / 2 - self.red) 
-    yaxis = range(0, self.map.height)
-    ywall = []
-    #check for walls and record
-    for y in yaxis:
-      if self.map[midX][y]:
-        ywall.append(y)
-    # remove walls
-    for y in ywall:
-      yaxis.remove(y)
-    minDistance = 9999
-    for y in yaxis:
-      newDistance = self.getMazeDistance(myPos, (midX, y))
-      if newDistance < minDistance:
-        minDistance = newDistance
-    features['distanceToMid'] = minDistance
-
-    #Scared of enemy ghosts
-    scaredValue = None
-    for enemyInd in self.enemyIndex:
-      scaredValue = 0
-      enemyPos = gameState.getAgentPosition(enemyInd)
-      if enemyPos is None:
-        continue
-      if self.red:
-        if myPos[0] <= midX or enemyPos[0] <= midX:
-          continue
-      else:
-        if myPos[0] >= midX or enemyPos[0] >= midX:
-          continue
-      scaredValue =+ self.getMazeDistance(myPos, (midX, y))
-    if scaredValue != 0:
-      scaredValue = 100.0/scaredValue
-      print scaredValue
-    features['distanceToEnemy'] = scaredValue
-
-
     return features
 
   def getWeights(self, gameState, action):
-    numFoodCarrying = gameState.getAgentState(self.index).numCarrying
-    return {'successorScore': 100, 
-            'distanceToFood': -1.0, 
-            'distanceToMid': -numFoodCarrying/1.7,
-            'distanceToEnemy': -(1.0 + numFoodCarrying)
-            }
+    return {'successorScore': 100, 'distanceToFood': -1}
 
 class DefensiveReflexAgent(ReflexCaptureAgent):
   """
