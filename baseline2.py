@@ -167,6 +167,8 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
       enemyPos = gameState.getAgentPosition(enemyInd)
       if enemyPos is None:
         continue
+      # if enemy is a white ghost
+        # continue
       if self.red:
         if myPos[0] <= midX or enemyPos[0] <= midX:
           continue
