@@ -64,6 +64,7 @@ class ReflexCaptureAgent(CaptureAgent):
     Picks among the actions with the highest Q(s,a).
     """
     actions = gameState.getLegalActions(self.index)
+    actions.remove("Stop")
 
     # You can profile your evaluation time by uncommenting these lines
     # start = time.time()
@@ -178,9 +179,9 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
       else:
         if myPos[0] >= midX or enemyPos[0] >= midX:
           continue
-      scaredValue =+ self.getMazeDistance(myPos, (midX, y))
+      scaredValue =+ self.getMazeDistance(myPos, enemyPos)
     if scaredValue != 0:
-      scaredValue = 100.0/scaredValue
+      scaredValue = 10.0/scaredValue
       print scaredValue
     features['distanceToEnemy'] = scaredValue
 
