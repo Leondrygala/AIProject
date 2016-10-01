@@ -141,7 +141,7 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
     if len(foodList) > 0: # This should always be True,  but better safe than sorry
       myPos = successor.getAgentState(self.index).getPosition()
       minDistance = min([self.getMazeDistance(myPos, food) for food in foodList])
-      features['distanceToFood'] = minDistance
+      features['distanceToFood'] = 1.0/minDistance
 
     # get distance to home-side
     midX = int(self.map.width / 2 - self.red) 
@@ -155,11 +155,7 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
     for y in ywall:
       yaxis.remove(y)
     # search for the closest sqaure on the home-side
-    minDistance = 9999
-    for y in yaxis:
-      newDistance = self.getMazeDistance(myPos, (midX, y))
-      if newDistance < minDistance:
-        minDistance = newDistance
+    minDistance = min(self.getMazeDistance(myPos, (midX, y)) for y in yaxis)
     features['distanceToMid'] = minDistance
 
     #Scared of enemy ghosts
@@ -181,8 +177,7 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
           continue
       scaredValue =+ self.getMazeDistance(myPos, enemyPos)
     if scaredValue != 0:
-      scaredValue = 10.0/scaredValue
-      print scaredValue
+      scaredValue = 1.0/scaredValue
     features['distanceToEnemy'] = scaredValue
 
 
@@ -191,9 +186,9 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
   def getWeights(self, gameState, action):
     numFoodCarrying = gameState.getAgentState(self.index).numCarrying
     return {'successorScore': 100, 
-            'distanceToFood': -1.0, 
+            'distanceToFood': 10.0, 
             'distanceToMid': -numFoodCarrying/1.7,
-            'distanceToEnemy': -(1.0 + numFoodCarrying) # we are more scared if we've got a big payload
+            'distanceToEnemy': -100.0*(1.0 + numFoodCarrying) # we are more scared if we've got a big payload
             }
 
 class DefensiveReflexAgent(ReflexCaptureAgent):
@@ -223,6 +218,28 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
       dists = [self.getMazeDistance(myPos, a.getPosition()) for a in invaders]
       features['invaderDistance'] = min(dists)
 
+    #get the sum of distance to all food
+    foodList = self.getFoodYouAreDefending(successor).asList()    
+    # Compute distance to the nearest food
+    if len(foodList) > 0: # This should always be True,  but better safe than sorry
+      sumDistance = sum([self.getMazeDistance(myPos, food) for food in foodList])
+      features['distanceToAllFood'] = sumDistance
+
+    # get distance to the mid map (home side)
+    midX = int(self.map.width / 2 - self.red) 
+    yaxis = range(0, self.map.height)
+    ywall = []
+    #check for walls and record them
+    for y in yaxis:
+      if self.map[midX][y]:
+        ywall.append(y)
+    # remove walls from yaxis
+    for y in ywall:
+      yaxis.remove(y)
+    # search for the closest sqaure on the home-side
+    minDistance = min(self.getMazeDistance(myPos, (midX, y)) for y in yaxis)
+    features['distanceToMid'] = minDistance
+
     if action == Directions.STOP: features['stop'] = 1
     rev = Directions.REVERSE[gameState.getAgentState(self.index).configuration.direction]
     if action == rev: features['reverse'] = 1
@@ -230,4 +247,10 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
     return features
 
   def getWeights(self, gameState, action):
-    return {'numInvaders': -1000, 'onDefense': 100, 'invaderDistance': -10, 'stop': -100, 'reverse': -2}
+    return {'numInvaders': -1000, 
+            'onDefense': 100, 
+            'invaderDistance': -10, 
+            'stop': -100, 
+            'reverse': -2,
+            'distanceToAllFood': -1,
+            'distanceToMid': -5}
