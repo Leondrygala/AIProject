@@ -6,6 +6,8 @@ import random,util,math
 from game import *
 from game import Directions, Actions
 import pickle
+import time
+import copy
 
 def createTeam(firstIndex, secondIndex, isRed,
                first = 'QLearningAgent', second = 'QLearningAgent'):
@@ -38,7 +40,7 @@ class QLearningAgent(ReflexCaptureAgent):
         self.accumTrainRewards = 0.0
         self.accumTestRewards = 0.0
         self.numTraining = 1
-        self.epsilon = 0.05
+        self.epsilon = 0.10
         self.alpha = 0.2
         self.discount = 0.8
 
@@ -46,8 +48,13 @@ class QLearningAgent(ReflexCaptureAgent):
         ReflexCaptureAgent.registerInitialState(self, gameState)
         self.weights = util.Counter()
         # self.weights['closest-food'] = -0.1
-        # self.weights['distanceToMid'] = -0.1
+        # self.weights['distanceToMid'] = -0.05
+        # self.weights['killpacman'] = 1
+        # self.weights['#-of-ghosts-1-step-away'] = -1
         self.loadQWeight()
+
+        initialMapState(self, gameState)
+
 
         self.lastAction = None
         self.lastState = None
@@ -68,7 +75,6 @@ class QLearningAgent(ReflexCaptureAgent):
         if util.flipCoin(self.epsilon):
             legalActions = gameState.getLegalActions(self.index)
             if len(legalActions) == 0:
-                print "*******************yep"
                 return None
             action = random.choice(legalActions)
         else:
@@ -127,23 +133,13 @@ class QLearningAgent(ReflexCaptureAgent):
             minDistance = min(self.getMazeDistance((next_x, next_y), (midX, y)) for y in yaxis)
             distanceToMid = (1+myState.numCarrying) * float(minDistance) / mapArea
             # if features["ghostDistance"] != 0:
-            #     distanceToMid *= features["ghostDistance"]
+            #     distanceToMid /= features["ghostDistance"] / 3
             return distanceToMid
-
-        def checkPacman(walls, next_x, red):
-            #if next_x is on the red side, and the agent is red, false.
-            #if next_x is on the red side, and the agent is !red, true.
-            #if next_x is on the blue side, and the agent is red, false.
-            #if next_x is on the blue side, and the agent is !red, true.
-            midX = int(walls.width / 2 - 1)
-            return (next_x <= midX) != red
-
 
         # extract the grid of food and wall locations and get the ghost locations
         food = self.getFood(state)
         foodList = food.asList()
         walls = state.getWalls()
-        # enemies = [state.getAgentPosition(i) for i in self.enemyIndex]
         enemies = [state.getAgentState(i) for i in self.enemyIndex]
         mapArea = (walls.width * walls.height)
         for agentIndex in self.agentsOnTeam:
@@ -155,13 +151,12 @@ class QLearningAgent(ReflexCaptureAgent):
         features = util.Counter()
         features["bias"] = 1.0
 
-
         # compute the location of pacman after he takes the action
         x, y = myState.getPosition()
         dx, dy = Actions.directionToVector(action)
         next_x, next_y = int(x + dx), int(y + dy)
 
-        # count the number of ghosts 1-step away
+        # calculate the ghosts and pacman around us
         ghost_count = 0;
         pacman_count = 0
         for enemy in enemies:
@@ -174,29 +169,33 @@ class QLearningAgent(ReflexCaptureAgent):
             distToEnemy = float(self.getMazeDistance((next_x, next_y), enemy.getPosition())) 
             if distToEnemy == 0:
                 distToEnemy = 0.1
+            
             #Note we want to check if the enemy is a pacman where we are moving to, not where they currently are
-            enemyIsPacman = checkPacman(walls, next_x, not self.red)
+            enemyIsPacman = self.checkPacman(walls.width, next_x, not self.red)
             if (    (enemyIsPacman and not myState.scaredTimer > 1) 
                     or (not enemyIsPacman and enemy.scaredTimer > 1)  ):
-
+                # Either they are a pacman and we are a ghost
+                # or we are a pacman and they are a scared ghost
                 if enemy.getPosition() == (next_x, next_y):
                     features["killpacman"] = 1.0
                     continue
                 features["#-of-pacmen-1-step-away"] += (next_x, next_y) in Actions.getLegalNeighbors(enemy_pos, walls)
                 #similar to closest food but for delicous enemy pacmen
                 if distToEnemy < features["invaderDistance"] or features["invaderDistance"] == 0:
-                    features["invaderDistance"] = 1 / distToEnemy / mapArea
+                    features["invaderDistance"] = distToEnemy
             else:
                 features["#-of-ghosts-1-step-away"] += (next_x, next_y) in Actions.getLegalNeighbors(enemy_pos, walls)
+                # Note distToEnemy is set at 0.1 if it is actually 0
                 if distToEnemy < features["ghostDistance"] or features["ghostDistance"] == 0:
-                    features["ghostDistance"] = 1 / distToEnemy / mapArea
+                    features["ghostDistance"] = distToEnemy
         
         # features["friendDistance"] = float(self.getMazeDistance((next_x, next_y), allyState.getPosition())) / mapArea
+        # features["#-of-friends-3-steps-away"] = self.getMazeDistance((next_x, next_y), allyState.getPosition()) <= 3
         features['distanceToMid'] = featDistanceToMid(walls, next_x, next_y)
         
         # if there is no danger of ghosts then add the food feature
-        if not features["#-of-ghosts-1-step-away"]:
-            features["eats-food"] = 1.0
+        if not features["#-of-ghosts-1-step-away"]: #remember this can't be zero even if the real value is 0, see above
+            # features["eats-food"] = 1.0
             if len(foodList) > 2:
                 foodDist = min([self.getMazeDistance((next_x, next_y), f) for f in foodList])
                 if foodDist == 0:
@@ -205,9 +204,14 @@ class QLearningAgent(ReflexCaptureAgent):
                     # make the distance a number less than one otherwise the update
                     # will diverge wildly
                     features["closest-food"] = float(foodDist) / mapArea
-                    # features["closest-food-exp"] = 1 / float(foodDist) / mapArea
+        else:
+            if (next_x,next_y) in self.deadEnd.keys():
+                features["deadend"] = 1.0
         
-
+        if features["ghostDistance"]:
+            features["ghostDistance"] = 1 / features["ghostDistance"]
+        if features["invaderDistance"]:
+            features["invaderDistance"] = 1 / features["invaderDistance"]
         features.divideAll(10.0)
         return features
 
@@ -236,18 +240,17 @@ class QLearningAgent(ReflexCaptureAgent):
         for f in feature_vector:
             self.weights[f] += feature_vector[f]
 
-    
     def observationFunction(self, state):
         """
             This is where we ended up after our last action.
             The simulation should somehow ensure this is called
         """
         if not self.lastState is None:
-            reward = self.getCustomReward(state, self.lastState)
+            reward = self.getCustomReward(self.lastState, state)
             self.observeTransition(self.lastState, self.lastAction, state, reward)
         return state.makeObservation(self.index)
 
-    def observeTransition(self, state,action,nextState,deltaReward):
+    def observeTransition(self, state, action,nextState,deltaReward):
         """
             Called by environment to inform agent that a transition has
             been observed. This will result in a call to self.update
@@ -259,23 +262,34 @@ class QLearningAgent(ReflexCaptureAgent):
     def getCustomReward(self, state, newState):
         myPos = state.getAgentPosition(self.index)
         myPosNew = newState.getAgentPosition(self.index)
-
         scoreReward = (state.getScore() - newState.getScore()) * 10
         distance = self.getMazeDistance(myPos, myPosNew)
-        if distance > 2:
+        if distance > 3:
             #we probably just got eaten
             scoreReward += -10
-
-        for eInd in self.enemyIndex:
-            enemy_pos = state.getAgentPosition(eInd)
-            if enemy_pos == myPosNew:
-                scoreReward += 10
-                
+            print "Ouch, agent ", self.index, " just got eaten!"
+        else:
+            for eInd in self.enemyIndex:
+                enemy_pos = state.getAgentPosition(eInd)
+                enemy_pos2 = newState.getAgentPosition(eInd)
+                if (enemy_pos == myPosNew and
+                    not self.checkPacman(state.getWalls().width, myPosNew[0], self.red) ):
+                    print "Yum, agent ", self.index, " just ate ", eInd, "!"
+                    scoreReward += 10
 
         if self.getFood(state)[myPosNew[0]][myPosNew[1]]:
             scoreReward += 1
+            print "Agent ", self.index, " just ate some food"
         
         return scoreReward
+
+    def checkPacman(self, width, next_x, red):
+        #if next_x is on the red side, and the agent is red, false.
+        #if next_x is on the red side, and the agent is !red, true.
+        #if next_x is on the blue side, and the agent is red, false.
+        #if next_x is on the blue side, and the agent is !red, true.
+        midX = int(width / 2 - 1)
+        return (next_x <= midX) != red
 
     def loadQWeight(self):
         if self.index == 0:
@@ -302,7 +316,13 @@ class QLearningAgent(ReflexCaptureAgent):
             pickle.dump(self.weights, outputfile)
 
     def final(self, state):
-        self.saveQWeights()
+        if ( (state.getScore() > 0) and self.red or
+            (state.getScore < 0) and not self.red  ): 
+            print "*** We Won! Updated Q"
+            self.saveQWeights()
+            
+
+
         # ReflexCaptureAgent.final(state)
 
     # def final(self, state):
@@ -343,3 +363,145 @@ class QLearningAgent(ReflexCaptureAgent):
     #     if self.episodesSoFar == self.numTraining:
     #         msg = 'Training Done (turning off epsilon and alpha)'
     #         print '%s\n%s' % (msg,'-' * len(msg))
+
+def initialMapState(self, gameState):
+  walls = gameState.getWalls()
+  width, height = gameState.data.layout.width, gameState.data.layout.height
+
+  self.end = {}
+  self.deadEnd = {}
+  self.endNew = {}
+
+  if self.red:
+
+    for i in range(width/2, width):
+      for j in range(1, height):
+         threeWall(self,walls, (i, j))
+
+    self.deadEnd=merge_two_dicts(self.deadEnd, copy.copy(self.end))
+
+    while len(self.end)!=0:
+      for item in self.end:
+        checkNeighbor(self,walls,item,self.end[item])
+
+      self.deadEnd = merge_two_dicts(self.deadEnd, copy.copy(self.endNew))
+      self.end=copy.copy(self.endNew)
+      self.endNew={}
+
+  else:
+
+    for i in range(0, width/2):
+      for j in range(1, height):
+        threeWall(self, walls, (i, j))
+    self.deadEnd = merge_two_dicts(self.deadEnd, copy.copy(self.end))
+
+    while len(self.end) != 0:
+      for item in self.end:
+        checkNeighbor(self, walls, item, self.end[item])
+
+      self.deadEnd = merge_two_dicts(self.deadEnd, copy.copy(self.endNew))
+      self.end = copy.copy(self.endNew)
+      self.endNew = {}
+
+def merge_two_dicts(x, y):
+    '''Given two dicts, merge them into a new dict as a shallow copy.'''
+    z = x.copy()
+    z.update(y)
+    return z
+
+def threeWall(self,state, position):
+
+    i, j = position
+    counter = 0
+    driction=""
+    if not state[i][j]:
+
+      if i < state.width - 1:
+          if state[i + 1][j]:
+            counter += 1
+          else:
+            driction='E'
+      if i >  0:
+          if state[i - 1][j]:
+            counter += 1
+          else:
+            driction = 'W'
+      if j< state.height - 1:
+          if state[i][j + 1]:
+            counter += 1
+          else:
+            driction = 'N'
+      if j>0:
+          if state[i][j - 1]:
+            counter += 1
+          else:
+            driction = 'S'
+
+    if counter == 3:
+      self.end[(i, j)]=driction
+
+def isInTunnel(state, position,OldDirection):
+  i, j = position
+  direction=[]
+
+  if not state[i][j]:
+    if i < state.width - 1:
+      if not state[i + 1][j]:
+        direction.append('E')
+
+    if i > 0:
+      if not state[i - 1][j]:
+        direction.append('W')
+
+    if j < state.height - 1:
+      if not state[i][j + 1]:
+        direction.append('N')
+
+    if j > 0:
+      if not state[i][j - 1]:
+        direction.append('S')
+
+  if len(direction)==2:
+    if direction[0]==oppositeDirection(direction[1]):
+      newDirection=OldDirection
+
+    else:
+      for item in direction:
+        if oppositeDirection(OldDirection)!=item:
+            newDirection=item
+
+
+    return (True,newDirection)
+  else:
+    return (False,False)
+
+def oppositeDirection(direction):
+  if direction=='N':
+    return 'S';
+  if direction == 'S':
+    return 'N'
+  if direction == 'E':
+    return 'W'
+  if direction == 'W':
+    return 'E'
+
+def checkNeighbor(self,walls,position,direction):
+    i, j = position
+
+    if direction=='N':
+      j+=1
+
+    if direction == 'S':
+      j-=1
+
+    if direction == 'W':
+      i-=1
+
+    if direction == 'E':
+      i += 1
+
+    isTunnel,newDirection=isInTunnel(walls, (i, j), direction)
+
+
+    if isTunnel:
+        self.endNew[(i, j)] = newDirection
