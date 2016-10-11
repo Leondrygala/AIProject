@@ -5,9 +5,11 @@ from baselineTeam import ReflexCaptureAgent
 import random,util,math
 from game import *
 from game import Directions, Actions
+from capture import AgentRules, GameState
 import pickle
 import time
 import copy
+from util import PriorityQueue
 
 def createTeam(firstIndex, secondIndex, isRed,
                first = 'QLearningAgent', second = 'QLearningAgent'):
@@ -40,7 +42,7 @@ class QLearningAgent(ReflexCaptureAgent):
         self.accumTrainRewards = 0.0
         self.accumTestRewards = 0.0
         self.numTraining = 1
-        self.epsilon = 0.10
+        self.epsilon = 0.05
         self.alpha = 0.2
         self.discount = 0.8
 
@@ -52,6 +54,7 @@ class QLearningAgent(ReflexCaptureAgent):
         # self.weights['killpacman'] = 1
         # self.weights['#-of-ghosts-1-step-away'] = -1
         self.loadQWeight()
+        self.checkWeights()
 
         initialMapState(self, gameState)
 
@@ -72,13 +75,17 @@ class QLearningAgent(ReflexCaptureAgent):
         """
 
         # Pick Action
+        legalActions = gameState.getLegalActions(self.index)
+        legalActions.remove('Stop')
+        if len(legalActions) == 0:
+            return None
         if util.flipCoin(self.epsilon):
-            legalActions = gameState.getLegalActions(self.index)
-            if len(legalActions) == 0:
-                return None
             action = random.choice(legalActions)
         else:
+            # (value, action) = max((uniformCostSearchEvaluate(self, gameState, a, 20), a) for a in legalActions)
+            # print value, action
             value, action = self.computeValueActionFromQValues(gameState)
+            
         self.lastState  = gameState
         self.lastAction = action
         return action
@@ -92,6 +99,7 @@ class QLearningAgent(ReflexCaptureAgent):
         # if random:
         #     #we should pick a mostly random action
         legalActions = state.getLegalActions(self.index)
+        legalActions.remove('Stop')
         if len(legalActions) == 0:
             return (0, None)
         
@@ -110,7 +118,6 @@ class QLearningAgent(ReflexCaptureAgent):
         #     while action != max_action:
 
         return (max_value, max_action)
-
 
     def getFeatures(self, state, action):
         # Finds the minimum distance to our home state
@@ -131,7 +138,7 @@ class QLearningAgent(ReflexCaptureAgent):
 
             # search for the closest sqaure on the home-side
             minDistance = min(self.getMazeDistance((next_x, next_y), (midX, y)) for y in yaxis)
-            distanceToMid = (1+myState.numCarrying) * float(minDistance) / mapArea
+            distanceToMid = (myState.numCarrying) * float(minDistance) / mapArea
             # if features["ghostDistance"] != 0:
             #     distanceToMid /= features["ghostDistance"] / 3
             return distanceToMid
@@ -157,11 +164,13 @@ class QLearningAgent(ReflexCaptureAgent):
         next_x, next_y = int(x + dx), int(y + dy)
 
         # calculate the ghosts and pacman around us
-        ghost_count = 0;
+        ghost_count = 0
         pacman_count = 0
+        enemyCarryingCount = 0;
         for enemy in enemies:
             if enemy is None:
                 continue
+            enemyCarryingCount += enemy.numCarrying
             enemy_pos = enemy.getPosition()
             if enemy_pos is None:
                 continue
@@ -206,8 +215,10 @@ class QLearningAgent(ReflexCaptureAgent):
                     features["closest-food"] = float(foodDist) / mapArea
         else:
             if (next_x,next_y) in self.deadEnd.keys():
-                features["deadend"] = 1.0
+                features["deadEnd"] = 1.0
         
+        if next_y < walls.height/2.0 and allyState.getPosition()[1] < walls.height/2.0:
+            features["teamwork"] = 0.01
         if features["ghostDistance"]:
             features["ghostDistance"] = 1 / features["ghostDistance"]
         if features["invaderDistance"]:
@@ -266,7 +277,7 @@ class QLearningAgent(ReflexCaptureAgent):
         distance = self.getMazeDistance(myPos, myPosNew)
         if distance > 3:
             #we probably just got eaten
-            scoreReward += -10
+            scoreReward += -3
             print "Ouch, agent ", self.index, " just got eaten!"
         else:
             for eInd in self.enemyIndex:
@@ -275,11 +286,10 @@ class QLearningAgent(ReflexCaptureAgent):
                 if (enemy_pos == myPosNew and
                     not self.checkPacman(state.getWalls().width, myPosNew[0], self.red) ):
                     print "Yum, agent ", self.index, " just ate ", eInd, "!"
-                    scoreReward += 10
+                    scoreReward += 3
 
         if self.getFood(state)[myPosNew[0]][myPosNew[1]]:
             scoreReward += 1
-            print "Agent ", self.index, " just ate some food"
         
         return scoreReward
 
@@ -316,53 +326,42 @@ class QLearningAgent(ReflexCaptureAgent):
             pickle.dump(self.weights, outputfile)
 
     def final(self, state):
-        if ( (state.getScore() > 0) and self.red or
-            (state.getScore < 0) and not self.red  ): 
+        self.saveQWeights()
+        if ( ((state.getScore() > 0) and self.red) or
+            ((state.getScore() < 0) and not self.red)  ): 
             print "*** We Won! Updated Q"
-            self.saveQWeights()
+            
+
             
 
 
         # ReflexCaptureAgent.final(state)
 
-    # def final(self, state):
-    #     """
-    #       Called by Pacman game at the terminal state
-    #     """
-    #     deltaReward = state.getScore() - self.lastState.getScore()
-    #     self.observeTransition(self.lastState, self.lastAction, state, deltaReward)
-    #     self.stopEpisode()
+    def checkWeights(self):
+        #should be negative
+        if self.weights['closest-food'] > 0:
+            self.weights['closest-food'] = -self.weights['closest-food']
+        if self.weights['distanceToMid'] > 0:
+            self.weights['distanceToMid'] = -self.weights['distanceToMid']
+        if self.weights['ghostDistance'] > 0:
+            self.weights['ghostDistance'] = -self.weights['ghostDistance']
+        if self.weights['#-of-ghosts-1-step-away'] > 0:
+            self.weights['#-of-ghosts-1-step-away'] = -self.weights['#-of-ghosts-1-step-away']
+        if self.weights['deadEnd'] > 0:
+            self.weights['deadEnd'] = -self.weights['deadEnd']
+        if self.weights["teamwork"] > 0:
+            self.weights['teamwork'] = -self.weights['teamwork']
 
-    #     # Make sure we have this var
-    #     if not 'episodeStartTime' in self.__dict__:
-    #         self.episodeStartTime = time.time()
-    #     if not 'lastWindowAccumRewards' in self.__dict__:
-    #         self.lastWindowAccumRewards = 0.0
-    #     self.lastWindowAccumRewards += state.getScore()
 
-    #     NUM_EPS_UPDATE = 100
-    #     if self.episodesSoFar % NUM_EPS_UPDATE == 0:
-    #         print 'Reinforcement Learning Status:'
-    #         windowAvg = self.lastWindowAccumRewards / float(NUM_EPS_UPDATE)
-    #         if self.episodesSoFar <= self.numTraining:
-    #             trainAvg = self.accumTrainRewards / float(self.episodesSoFar)
-    #             print '\tCompleted %d out of %d training episodes' % (
-    #                    self.episodesSoFar,self.numTraining)
-    #             print '\tAverage Rewards over all training: %.2f' % (
-    #                     trainAvg)
-    #         else:
-    #             testAvg = float(self.accumTestRewards) / (self.episodesSoFar - self.numTraining)
-    #             print '\tCompleted %d test episodes' % (self.episodesSoFar - self.numTraining)
-    #             print '\tAverage Rewards over testing: %.2f' % testAvg
-    #         print '\tAverage Rewards for last %d episodes: %.2f'  % (
-    #                 NUM_EPS_UPDATE,windowAvg)
-    #         print '\tEpisode took %.2f seconds' % (time.time() - self.episodeStartTime)
-    #         self.lastWindowAccumRewards = 0.0
-    #         self.episodeStartTime = time.time()
+        #should be postitive
+        if self.weights['invaderDistance'] < 0:
+            self.weights['invaderDistance'] = -self.weights['invaderDistance']
+        if self.weights['killpacman'] < 0:
+            self.weights['killpacman'] = -self.weights['killpacman']
+        if self.weights['#-of-pacmen-1-step-away'] < 0:
+            self.weights['#-of-pacmen-1-step-away'] = -self.weights['#-of-pacmen-1-step-away']
 
-    #     if self.episodesSoFar == self.numTraining:
-    #         msg = 'Training Done (turning off epsilon and alpha)'
-    #         print '%s\n%s' % (msg,'-' * len(msg))
+
 
 def initialMapState(self, gameState):
   walls = gameState.getWalls()
@@ -505,3 +504,57 @@ def checkNeighbor(self,walls,position,direction):
 
     if isTunnel:
         self.endNew[(i, j)] = newDirection
+
+# def uniformCostSearchEvaluate(self, gameState, firstAction, searchDepth):
+
+#     #copy the state and take the first action
+#     firstState = GameState(gameState)
+#     # Find appropriate rules for the agent
+#     AgentRules.applyAction( firstState, firstAction, self.index )
+#     AgentRules.checkDeath(firstState, self.index)
+#     AgentRules.decrementTimer(firstState.data.agentStates[self.index])
+
+#     #Set up a queue and add the first state
+#     queue = PriorityQueue()
+#     vstd_states = util.Counter()
+#     vstd_states[firstState.getAgentPosition(self.index)] = 1
+#     queue.push((firstState,1), 0)
+
+#     maxValue = 0
+#     while not queue.isEmpty() and searchDepth > 0:
+#         searchDepth -= 1
+#         newState, depth = queue.pop()
+#         legalActions = newState.getLegalActions()
+
+        
+#         for action in legalActions:
+#             # Copy current state
+#             state = newState.deepCopy()
+#             if state == newState:
+#                 print "state is newState"
+#             if :
+                
+#             # Find appropriate rules for the agent
+#             AgentRules.applyAction( state, action, self.index )
+#             AgentRules.checkDeath(state, self.index)
+#             AgentRules.decrementTimer(state.data.agentStates[self.index])
+#             if not vstd_states[state.getAgentPosition(self.index)]:
+#                 vstd_states[state.getAgentPosition(self.index)] = 1
+
+#                 qValue, _ = self.computeValueActionFromQValues(state) 
+#                 qValue *= math.pow(self.discount,depth)
+#                 queue.push((state,depth+1), qValue)
+#                 print "Q:", qValue
+#                 if maxValue < qValue:
+#                     maxValue = qValue
+    
+#     return maxValue
+
+# class PriorityQueue2(PriorityQueue):
+#     def  __init__(self):
+#         self.__init__()
+    
+#     def popWVaue(self):
+#         (value, _, item) = heapq.heappop(self.heap)
+#         #  (_, item) = heapq.heappop(self.heap)
+#         return (item, value)
