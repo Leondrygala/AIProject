@@ -143,25 +143,29 @@ class QLearningAgent(ReflexCaptureAgent):
             #     distanceToMid /= features["ghostDistance"] / 3
             return distanceToMid
 
+        
+        nextState = self.getSuccessor(state, action)
         # extract the grid of food and wall locations and get the ghost locations
-        food = self.getFood(state)
+        food = self.getFood(nextState)
         foodList = food.asList()
-        walls = state.getWalls()
+        walls = nextState.getWalls()
+        #We get the enemy states based on the old state. They shouldn't move unless we ate them
         enemies = [state.getAgentState(i) for i in self.enemyIndex]
+        enemies_new = [nextState.getAgentState(i) for i in self.enemyIndex]
         mapArea = (walls.width * walls.height)
         for agentIndex in self.agentsOnTeam:
             if agentIndex == self.index:
-                myState = state.getAgentState(agentIndex)
+                myState = nextState.getAgentState(agentIndex)
+                oldState = state.getAgentState(agentIndex)
             else:
-                allyState = state.getAgentState(agentIndex)
+                allyState = nextState.getAgentState(agentIndex)
 
         features = util.Counter()
         features["bias"] = 1.0
 
         # compute the location of pacman after he takes the action
-        x, y = myState.getPosition()
-        dx, dy = Actions.directionToVector(action)
-        next_x, next_y = int(x + dx), int(y + dy)
+        next_x, next_y = nextState.getAgentPosition(self.index)
+
 
         # calculate the ghosts and pacman around us
         ghost_count = 0
@@ -170,7 +174,6 @@ class QLearningAgent(ReflexCaptureAgent):
         for enemy in enemies:
             if enemy is None:
                 continue
-            enemyCarryingCount += enemy.numCarrying
             enemy_pos = enemy.getPosition()
             if enemy_pos is None:
                 continue
@@ -178,14 +181,16 @@ class QLearningAgent(ReflexCaptureAgent):
             distToEnemy = float(self.getMazeDistance((next_x, next_y), enemy.getPosition())) 
             if distToEnemy == 0:
                 distToEnemy = 0.1
-            
+            enemy.isPacman 
             #Note we want to check if the enemy is a pacman where we are moving to, not where they currently are
             enemyIsPacman = self.checkPacman(walls.width, next_x, not self.red)
             if (    (enemyIsPacman and not myState.scaredTimer > 1) 
                     or (not enemyIsPacman and enemy.scaredTimer > 1)  ):
                 # Either they are a pacman and we are a ghost
                 # or we are a pacman and they are a scared ghost
-                if enemy.getPosition() == (next_x, next_y):
+
+                #If we are standing where our enemy used to be, we killed it
+                if enemy_pos == (next_x, next_y):
                     features["killpacman"] = 1.0
                     continue
                 features["#-of-pacmen-1-step-away"] += (next_x, next_y) in Actions.getLegalNeighbors(enemy_pos, walls)
@@ -197,44 +202,74 @@ class QLearningAgent(ReflexCaptureAgent):
                 # Note distToEnemy is set at 0.1 if it is actually 0
                 if distToEnemy < features["ghostDistance"] or features["ghostDistance"] == 0:
                     features["ghostDistance"] = distToEnemy
-        
-        # features["friendDistance"] = float(self.getMazeDistance((next_x, next_y), allyState.getPosition())) / mapArea
+        friendDistance = float(self.getMazeDistance((next_x, next_y), allyState.getPosition())) + 0.1
+        features["friendDistance"] = 0.01 / friendDistance / mapArea
         # features["#-of-friends-3-steps-away"] = self.getMazeDistance((next_x, next_y), allyState.getPosition()) <= 3
         features['distanceToMid'] = featDistanceToMid(walls, next_x, next_y)
         
         # if there is no danger of ghosts then add the food feature
         if not features["#-of-ghosts-1-step-away"]: #remember this can't be zero even if the real value is 0, see above
-            # features["eats-food"] = 1.0
+            if myState.numCarrying > oldState.numCarrying:
+                features["eats-food"] = 1.0
             if len(foodList) > 2:
                 foodDist = min([self.getMazeDistance((next_x, next_y), f) for f in foodList])
                 if foodDist == 0:
                     foodDist = 0.1
                 if foodDist is not None:
-                    # make the distance a number less than one otherwise the update
-                    # will diverge wildly
                     features["closest-food"] = float(foodDist) / mapArea
         else:
             if (next_x,next_y) in self.deadEnd.keys():
                 features["deadEnd"] = 1.0
+            capsules = self.getCapsules(nextState)
+            if len(capsules) > 0:
+                capDist = min([self.getMazeDistance((next_x, next_y), c) for c in capsules])
+                if capDist == 0:
+                    capDist = 0.1
+                if capDist is not None:
+                    features["closest-cap"] = float(capDist) / mapArea
         
-        if next_y < walls.height/2.0 and allyState.getPosition()[1] < walls.height/2.0:
-            features["teamwork"] = 0.01
+        # if next_y < walls.height/2.0 and allyState.getPosition()[1] < walls.height/2.0:
+        #     features["teamwork"] = 0.01
         if features["ghostDistance"]:
             features["ghostDistance"] = 1 / features["ghostDistance"]
         if features["invaderDistance"]:
             features["invaderDistance"] = 1 / features["invaderDistance"]
+        
+        if action == Directions.STOP: features['stop'] = 1
+        rev = Directions.REVERSE[state.getAgentState(self.index).configuration.direction]
+
         features.divideAll(10.0)
+        # if features["invaderDistance"]:
+            
+        #     print "Features for ", self.index, ": ", features
+        #     time.sleep(3)
+
         return features
 
     def getWeights(self, gameState, action):
         return self.weights
+
+    def getSuccessor(self, gameState, action):
+        """
+        Finds the next successor which is a grid position (location tuple).
+        """
+        successor = gameState.generateSuccessor(self.index, action)
+        pos = successor.getAgentState(self.index).getPosition()
+        if pos != nearestPoint(pos):
+          # Only half a grid position was covered
+          return successor.generateSuccessor(self.index, action)
+        else:
+          return successor
+
 
     def getQValue(self, state, action):
         """
           Should return Q(state,action) = w * featureVector
           where * is the dotProduct operator
         """
-        return self.weights * self.getFeatures(state,action)
+        QValue = self.weights * self.getFeatures(state,action)
+        # print 'Total Q:', QValue
+        return QValue
 
     def update(self, state, action, nextState, reward):
         """
@@ -351,6 +386,12 @@ class QLearningAgent(ReflexCaptureAgent):
             self.weights['deadEnd'] = -self.weights['deadEnd']
         if self.weights["teamwork"] > 0:
             self.weights['teamwork'] = -self.weights['teamwork']
+        if self.weights["stop"] > 0:
+            self.weights['stop'] = -self.weights['stop']
+        if self.weights["reverse"] > 0:
+            self.weights['reverse'] = -self.weights['reverse']
+        if self.weights['friendDistance'] > 0:
+            self.weights['friendDistance'] = -self.weights['friendDistance']
 
 
         #should be postitive
