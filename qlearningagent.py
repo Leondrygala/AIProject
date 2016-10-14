@@ -35,6 +35,7 @@ class QLearningAgent(ReflexCaptureAgent):
     we give you to get an idea of what an offensive agent might look like,
     but it is by no means the best or only way to build an offensive agent.
     """
+    FOODTARGET = []
     def registerInitialState(self, gameState):
         actionFn = lambda state: state.getLegalActions()
         self.actionFn = actionFn
@@ -73,6 +74,7 @@ class QLearningAgent(ReflexCaptureAgent):
         """
         Picks among the actions with the highest Q(s,a).
         """
+        self.simulate(gameState)
 
         # Pick Action
         legalActions = gameState.getLegalActions(self.index)
@@ -99,7 +101,6 @@ class QLearningAgent(ReflexCaptureAgent):
         # if random:
         #     #we should pick a mostly random action
         legalActions = state.getLegalActions(self.index)
-        legalActions.remove('Stop')
         if len(legalActions) == 0:
             return (0, None)
         
@@ -193,7 +194,7 @@ class QLearningAgent(ReflexCaptureAgent):
                 if enemy_pos == (next_x, next_y):
                     features["killpacman"] = 1.0
                     continue
-                features["#-of-pacmen-1-step-away"] += (next_x, next_y) in Actions.getLegalNeighbors(enemy_pos, walls)
+                # features["#-of-pacmen-1-step-away"] += (next_x, next_y) in Actions.getLegalNeighbors(enemy_pos, walls)
                 #similar to closest food but for delicous enemy pacmen
                 if distToEnemy < features["invaderDistance"] or features["invaderDistance"] == 0:
                     features["invaderDistance"] = distToEnemy
@@ -208,18 +209,32 @@ class QLearningAgent(ReflexCaptureAgent):
         features['distanceToMid'] = featDistanceToMid(walls, next_x, next_y)
         
         # if there is no danger of ghosts then add the food feature
-        if not features["#-of-ghosts-1-step-away"]: #remember this can't be zero even if the real value is 0, see above
+        if features["ghostDistance"] > 4 or features["ghostDistance"] == 0: #remember this can't be zero even if the real value is 0, see above
             if myState.numCarrying > oldState.numCarrying:
                 features["eats-food"] = 1.0
             if len(foodList) > 2:
-                foodDist = min([self.getMazeDistance((next_x, next_y), f) for f in foodList])
+                myOldFoodTarget = None
+                allyFoodTarget = None
+                for (index, target_coords) in QLearningAgent.FOODTARGET:
+                    if index == self.index:
+                        myOldFoodTarget = (index, target_coords)
+                    else:
+                        #TODO also remove neighbough foods
+                        allyFoodTarget = target_coords
+                if not myOldFoodTarget is None:
+                    QLearningAgent.FOODTARGET.remove(myOldFoodTarget)
+                if not allyFoodTarget is None and allyFoodTarget in foodList:
+                    foodList.remove(allyFoodTarget)
+
+                foodDist, closestFood = min( [ (self.getMazeDistance((next_x, next_y), f), f) for f in foodList])
                 if foodDist == 0:
                     foodDist = 0.1
                 if foodDist is not None:
-                    features["closest-food"] = float(foodDist) / mapArea
-        else:
+                    QLearningAgent.FOODTARGET.append((self.index, closestFood))
+                    features["closest-food"] = 1 / float(foodDist) / mapArea
+        else:    
             if (next_x,next_y) in self.deadEnd.keys():
-                features["deadEnd"] = 1.0
+                features['deadEnd'] = 1.0
             capsules = self.getCapsules(nextState)
             if len(capsules) > 0:
                 capDist = min([self.getMazeDistance((next_x, next_y), c) for c in capsules])
@@ -239,11 +254,6 @@ class QLearningAgent(ReflexCaptureAgent):
         rev = Directions.REVERSE[state.getAgentState(self.index).configuration.direction]
 
         features.divideAll(10.0)
-        # if features["invaderDistance"]:
-            
-        #     print "Features for ", self.index, ": ", features
-        #     time.sleep(3)
-
         return features
 
     def getWeights(self, gameState, action):
@@ -255,6 +265,21 @@ class QLearningAgent(ReflexCaptureAgent):
         """
         successor = gameState.generateSuccessor(self.index, action)
         pos = successor.getAgentState(self.index).getPosition()
+        if pos != nearestPoint(pos):
+          # Only half a grid position was covered
+          return successor.generateSuccessor(self.index, action)
+        else:
+          return successor
+
+
+    def getSuccessorEnemy(self, gameState, action, enemy_index):
+        """
+        Finds the next successor which is a grid position (location tuple).
+        """
+        successor = gameState.generateSuccessor(enemy_index, action)
+        pos = successor.getAgentState(enemy_index).getPosition()
+        if pos is None:
+            return None
         if pos != nearestPoint(pos):
           # Only half a grid position was covered
           return successor.generateSuccessor(self.index, action)
@@ -308,11 +333,11 @@ class QLearningAgent(ReflexCaptureAgent):
     def getCustomReward(self, state, newState):
         myPos = state.getAgentPosition(self.index)
         myPosNew = newState.getAgentPosition(self.index)
-        scoreReward = (state.getScore() - newState.getScore()) * 10
+        scoreReward = (state.getScore() - newState.getScore())
         distance = self.getMazeDistance(myPos, myPosNew)
         if distance > 3:
             #we probably just got eaten
-            scoreReward += -3
+            scoreReward += -5
             print "Ouch, agent ", self.index, " just got eaten!"
         else:
             for eInd in self.enemyIndex:
@@ -321,7 +346,7 @@ class QLearningAgent(ReflexCaptureAgent):
                 if (enemy_pos == myPosNew and
                     not self.checkPacman(state.getWalls().width, myPosNew[0], self.red) ):
                     print "Yum, agent ", self.index, " just ate ", eInd, "!"
-                    scoreReward += 3
+                    scoreReward += 5
 
         if self.getFood(state)[myPosNew[0]][myPosNew[1]]:
             scoreReward += 1
@@ -365,44 +390,86 @@ class QLearningAgent(ReflexCaptureAgent):
         if ( ((state.getScore() > 0) and self.red) or
             ((state.getScore() < 0) and not self.red)  ): 
             print "*** We Won! Updated Q"
-            
-
-            
-
-
+        QLearningAgent.FOODTARGET = []
         # ReflexCaptureAgent.final(state)
 
     def checkWeights(self):
-        #should be negative
-        if self.weights['closest-food'] > 0:
-            self.weights['closest-food'] = -self.weights['closest-food']
-        if self.weights['distanceToMid'] > 0:
-            self.weights['distanceToMid'] = -self.weights['distanceToMid']
-        if self.weights['ghostDistance'] > 0:
-            self.weights['ghostDistance'] = -self.weights['ghostDistance']
-        if self.weights['#-of-ghosts-1-step-away'] > 0:
-            self.weights['#-of-ghosts-1-step-away'] = -self.weights['#-of-ghosts-1-step-away']
-        if self.weights['deadEnd'] > 0:
-            self.weights['deadEnd'] = -self.weights['deadEnd']
-        if self.weights["teamwork"] > 0:
-            self.weights['teamwork'] = -self.weights['teamwork']
-        if self.weights["stop"] > 0:
-            self.weights['stop'] = -self.weights['stop']
-        if self.weights["reverse"] > 0:
-            self.weights['reverse'] = -self.weights['reverse']
-        if self.weights['friendDistance'] > 0:
-            self.weights['friendDistance'] = -self.weights['friendDistance']
+        return
+        # #should be negative
+        # if self.weights['closest-cap'] > 0:
+        #     self.weights['closest-cap'] = -self.weights['closest-cap']
+        # if self.weights['distanceToMid'] > 0:
+        #     self.weights['distanceToMid'] = -self.weights['distanceToMid']
+        # if self.weights['ghostDistance'] > 0:
+        #     self.weights['ghostDistance'] = -self.weights['ghostDistance']
+        # if self.weights['#-of-ghosts-1-step-away'] > 0:
+        #     self.weights['#-of-ghosts-1-step-away'] = -self.weights['#-of-ghosts-1-step-away']
+        # if self.weights['deadEnd'] > 0:
+        #     self.weights['deadEnd'] = -self.weights['deadEnd']
+        # if self.weights["teamwork"] > 0:
+        #     self.weights['teamwork'] = -self.weights['teamwork']
+        # if self.weights["stop"] > 0:
+        #     self.weights['stop'] = -self.weights['stop']
+        # if self.weights["reverse"] > 0:
+        #     self.weights['reverse'] = -self.weights['reverse']
+        # if self.weights['friendDistance'] > 0:
+        #     self.weights['friendDistance'] = -self.weights['friendDistance']
 
 
-        #should be postitive
-        if self.weights['invaderDistance'] < 0:
-            self.weights['invaderDistance'] = -self.weights['invaderDistance']
-        if self.weights['killpacman'] < 0:
-            self.weights['killpacman'] = -self.weights['killpacman']
-        if self.weights['#-of-pacmen-1-step-away'] < 0:
-            self.weights['#-of-pacmen-1-step-away'] = -self.weights['#-of-pacmen-1-step-away']
+        # #should be postitive
+        # if self.weights['closest-food'] < 0:
+        #     self.weights['closest-food'] = -self.weights['closest-food']
+        # if self.weights['invaderDistance'] < 0:
+        #     self.weights['invaderDistance'] = -self.weights['invaderDistance']
+        # if self.weights['killpacman'] < 0:
+        #     self.weights['killpacman'] = -self.weights['killpacman']
+        # if self.weights['#-of-pacmen-1-step-away'] < 0:
+        #     self.weights['#-of-pacmen-1-step-away'] = -self.weights['#-of-pacmen-1-step-away']
 
+    def simulate(self,state):
+    # takes state
+    #
+        Qvalue={}
+        from util import Queue
+        queue = Queue()
+        queue.push(state)
+        positon0 = state.getAgentState(self.index).getPosition()
+        direction0= state.getAgentState(self.index).getDirection()
+        Qvalue[(positon0,direction0)] = ([],0)
+        while (not queue.isEmpty()):
+            successor = queue.pop()
+            positon = successor.getAgentPosition(self.index)
+            x,y=positon
+            positon=(int(x),int(y))
+            direction = successor.getAgentState(self.index).getDirection()
+            actions = successor.getLegalActions(self.index)
+            for action in actions:
+                if action !='Stop':
+                    successor2 = self.getSuccessor(successor, action)
+                    positon2 = successor2.getAgentState(self.index).getPosition()
+                    x, y = positon2
+                    positon2 = (int(x), int(y))
+                    direction2 = successor2.getAgentState(self.index).getDirection()
 
+                    if (positon2,direction2) not in Qvalue.keys():
+                        actionsList = copy.copy(Qvalue[(positon,direction)][0])
+                        QvalueOld = Qvalue[(positon,direction)][1]
+                        actionsList.append(action)
+                        qvalue = self.getQValue(successor,action)
+                        Qvalue[(positon2,direction2)]=(actionsList,QvalueOld+math.pow(0.8,len(actionsList))*qvalue)
+                        if len(actionsList)<5:
+                            queue.push(successor2)
+        print self.maximumValue(Qvalue)
+
+    def maximumValue(self,QvalueDict):
+        max=0
+        maxList=[];
+        for item in QvalueDict.values():
+            x,y=item
+            if y>max:
+                max=y
+                maxList=copy.copy(x)
+        return(max,maxList)
 
 def initialMapState(self, gameState):
   walls = gameState.getWalls()
