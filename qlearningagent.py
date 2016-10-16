@@ -37,15 +37,10 @@ class QLearningAgent(ReflexCaptureAgent):
     """
     FOODTARGET = []
     def registerInitialState(self, gameState):
-        actionFn = lambda state: state.getLegalActions()
-        self.actionFn = actionFn
-        self.episodesSoFar = 0
-        self.accumTrainRewards = 0.0
-        self.accumTestRewards = 0.0
         self.numTraining = 1
-        self.epsilon = 0.05
+        self.epsilon = 0.1
         self.alpha = 0.2
-        self.discount = 0.8
+        self.discount = 0.95
 
         self.start = gameState.getAgentPosition(self.index)
         ReflexCaptureAgent.registerInitialState(self, gameState)
@@ -54,11 +49,10 @@ class QLearningAgent(ReflexCaptureAgent):
         # self.weights['distanceToMid'] = -0.05
         # self.weights['killpacman'] = 1
         # self.weights['#-of-ghosts-1-step-away'] = -1
-        self.loadQWeight()
+        self.loadQWeight("qfile_0")
         self.checkWeights()
 
         initialMapState(self, gameState)
-
 
         self.lastAction = None
         self.lastState = None
@@ -74,23 +68,38 @@ class QLearningAgent(ReflexCaptureAgent):
         """
         Picks among the actions with the highest Q(s,a).
         """
-        self.simulate(gameState)
 
+        self.checkWeights()
         # Pick Action
         legalActions = gameState.getLegalActions(self.index)
         legalActions.remove('Stop')
-        if len(legalActions) == 0:
-            return None
-        if util.flipCoin(self.epsilon):
+        if len(legalActions) == 1:
+                action = legalActions[0]
+
+        elif util.flipCoin(self.epsilon):
             action = random.choice(legalActions)
         else:
             # (value, action) = max((uniformCostSearchEvaluate(self, gameState, a, 20), a) for a in legalActions)
             # print value, action
-            value, action = self.computeValueActionFromQValues(gameState)
-            
+            # value, action = self.computeValueActionFromQValues(gameState)
+            result = self.simulate(gameState)
+            if result==None:
+                print "WARNING USING RANDOM ACTION"
+                action = random.choice(legalActions)
+            else:
+                action = result
+
+
         self.lastState  = gameState
-        self.lastAction = action
-        return action
+
+        if action in gameState.getLegalActions(self.index):
+
+            self.lastAction = action
+            return action
+        else:
+            action = random.choice(gameState.getLegalActions(self.index))
+            self.lastAction = action
+            return action
 
     def computeValueActionFromQValues(self, state):
         """
@@ -144,7 +153,6 @@ class QLearningAgent(ReflexCaptureAgent):
             #     distanceToMid /= features["ghostDistance"] / 3
             return distanceToMid
 
-        
         nextState = self.getSuccessor(state, action)
         # extract the grid of food and wall locations and get the ghost locations
         food = self.getFood(nextState)
@@ -235,6 +243,7 @@ class QLearningAgent(ReflexCaptureAgent):
         else:    
             if (next_x,next_y) in self.deadEnd.keys():
                 features['deadEnd'] = 1.0
+
             capsules = self.getCapsules(nextState)
             if len(capsules) > 0:
                 capDist = min([self.getMazeDistance((next_x, next_y), c) for c in capsules])
@@ -292,6 +301,7 @@ class QLearningAgent(ReflexCaptureAgent):
           Should return Q(state,action) = w * featureVector
           where * is the dotProduct operator
         """
+
         QValue = self.weights * self.getFeatures(state,action)
         # print 'Total Q:', QValue
         return QValue
@@ -346,7 +356,7 @@ class QLearningAgent(ReflexCaptureAgent):
                 if (enemy_pos == myPosNew and
                     not self.checkPacman(state.getWalls().width, myPosNew[0], self.red) ):
                     print "Yum, agent ", self.index, " just ate ", eInd, "!"
-                    scoreReward += 5
+                    scoreReward += 2
 
         if self.getFood(state)[myPosNew[0]][myPosNew[1]]:
             scoreReward += 1
@@ -361,115 +371,154 @@ class QLearningAgent(ReflexCaptureAgent):
         midX = int(width / 2 - 1)
         return (next_x <= midX) != red
 
-    def loadQWeight(self):
-        if self.index == 0:
-            file_name = "qfile_0"
-        elif self.index == 1:
-            file_name = "qfile_1"
-        elif self.index == 2:
-            file_name = "qfile_2"
-        else:
-            file_name = "qfile_3"
+    def loadQWeight(self, file_name = None):
+        if file_name is None:
+            if self.index == 0:
+                file_name = "qfile_0"
+            elif self.index == 1:
+                file_name = "qfile_1"
+            elif self.index == 2:
+                file_name = "qfile_2"
+            else:
+                file_name = "qfile_3"
+
         with open(file_name, 'rb') as inputfile:
             self.weights = pickle.load(inputfile)
 
-    def saveQWeights(self):
-        if self.index == 0:
-            file_name = "qfile_0"
-        elif self.index == 1:
-            file_name = "qfile_1"
-        elif self.index == 2:
-            file_name = "qfile_2"
-        else:
-            file_name = "qfile_3"
+    def saveQWeights(self, file_name = None):
+        if file_name is None:
+            if self.index == 0:
+                file_name = "qfile_0"
+            elif self.index == 1:
+                file_name = "qfile_1"
+            elif self.index == 2:
+                file_name = "qfile_2"
+            else:
+                file_name = "qfile_3"
         with open(file_name, 'wb') as outputfile:
             pickle.dump(self.weights, outputfile)
 
     def final(self, state):
-        self.saveQWeights()
-        if ( ((state.getScore() > 0) and self.red) or
-            ((state.getScore() < 0) and not self.red)  ): 
-            print "*** We Won! Updated Q"
+        self.saveQWeights("qfile_0")
         QLearningAgent.FOODTARGET = []
         # ReflexCaptureAgent.final(state)
 
     def checkWeights(self):
-        return
-        # #should be negative
-        # if self.weights['closest-cap'] > 0:
-        #     self.weights['closest-cap'] = -self.weights['closest-cap']
-        # if self.weights['distanceToMid'] > 0:
-        #     self.weights['distanceToMid'] = -self.weights['distanceToMid']
-        # if self.weights['ghostDistance'] > 0:
-        #     self.weights['ghostDistance'] = -self.weights['ghostDistance']
-        # if self.weights['#-of-ghosts-1-step-away'] > 0:
-        #     self.weights['#-of-ghosts-1-step-away'] = -self.weights['#-of-ghosts-1-step-away']
-        # if self.weights['deadEnd'] > 0:
-        #     self.weights['deadEnd'] = -self.weights['deadEnd']
-        # if self.weights["teamwork"] > 0:
-        #     self.weights['teamwork'] = -self.weights['teamwork']
-        # if self.weights["stop"] > 0:
-        #     self.weights['stop'] = -self.weights['stop']
-        # if self.weights["reverse"] > 0:
-        #     self.weights['reverse'] = -self.weights['reverse']
-        # if self.weights['friendDistance'] > 0:
-        #     self.weights['friendDistance'] = -self.weights['friendDistance']
+        # return
+        # should be negative
+        # print "distance to mid: ", self.weights['distanceToMid']
+        if self.weights['closest-cap'] > 0:
+            self.weights['closest-cap'] = -self.weights['closest-cap']
+        if self.weights['distanceToMid'] > 0:
+            self.weights['distanceToMid'] = -self.weights['distanceToMid']
+        if self.weights['ghostDistance'] > 0:
+            self.weights['ghostDistance'] = -self.weights['ghostDistance']
+        if self.weights['#-of-ghosts-1-step-away'] > 0:
+            self.weights['#-of-ghosts-1-step-away'] = -self.weights['#-of-ghosts-1-step-away']
+        if self.weights['deadEnd'] > 0:
+            self.weights['deadEnd'] = -self.weights['deadEnd']
+        if self.weights["teamwork"] > 0:
+            self.weights['teamwork'] = -self.weights['teamwork']
+        if self.weights["stop"] > 0:
+            self.weights['stop'] = -self.weights['stop']
+        if self.weights["reverse"] > 0:
+            self.weights['reverse'] = -self.weights['reverse']
+        if self.weights['friendDistance'] > 0:
+            self.weights['friendDistance'] = -self.weights['friendDistance']
 
 
-        # #should be postitive
-        # if self.weights['closest-food'] < 0:
-        #     self.weights['closest-food'] = -self.weights['closest-food']
-        # if self.weights['invaderDistance'] < 0:
-        #     self.weights['invaderDistance'] = -self.weights['invaderDistance']
-        # if self.weights['killpacman'] < 0:
-        #     self.weights['killpacman'] = -self.weights['killpacman']
-        # if self.weights['#-of-pacmen-1-step-away'] < 0:
-        #     self.weights['#-of-pacmen-1-step-away'] = -self.weights['#-of-pacmen-1-step-away']
+        #should be postitive
+        if self.weights['closest-food'] < 0:
+            self.weights['closest-food'] = -self.weights['closest-food']
+        if self.weights['invaderDistance'] < 0:
+            self.weights['invaderDistance'] = -self.weights['invaderDistance']
+        if self.weights['killpacman'] < 0:
+            self.weights['killpacman'] = -self.weights['killpacman']
+        if self.weights['#-of-pacmen-1-step-away'] < 0:
+            self.weights['#-of-pacmen-1-step-away'] = -self.weights['#-of-pacmen-1-step-away']
 
-    def simulate(self,state):
-    # takes state
-    #
-        Qvalue={}
+    def simulate(self, state):
+        # takes state
+        #
+        Qvalue = []
         from util import Queue
         queue = Queue()
-        queue.push(state)
+
         positon0 = state.getAgentState(self.index).getPosition()
-        direction0= state.getAgentState(self.index).getDirection()
-        Qvalue[(positon0,direction0)] = ([],0)
+        x, y = positon0
+
+        positon0 = (int(x), int(y))
+        queue.push(([positon0],0,state))
+
         while (not queue.isEmpty()):
-            successor = queue.pop()
-            positon = successor.getAgentPosition(self.index)
-            x,y=positon
-            positon=(int(x),int(y))
-            direction = successor.getAgentState(self.index).getDirection()
-            actions = successor.getLegalActions(self.index)
+            # positonList = queue.pop()
+            positonListOld,QvalueOld,successorOld= queue.pop()
+            positonList = copy.copy(positonListOld)
+            actions =successorOld.getLegalActions(self.index)
             for action in actions:
-                if action !='Stop':
-                    successor2 = self.getSuccessor(successor, action)
-                    positon2 = successor2.getAgentState(self.index).getPosition()
-                    x, y = positon2
-                    positon2 = (int(x), int(y))
-                    direction2 = successor2.getAgentState(self.index).getDirection()
+                positonListnew = copy.copy(positonList)
+                if action != 'Stop':
 
-                    if (positon2,direction2) not in Qvalue.keys():
-                        actionsList = copy.copy(Qvalue[(positon,direction)][0])
-                        QvalueOld = Qvalue[(positon,direction)][1]
-                        actionsList.append(action)
-                        qvalue = self.getQValue(successor,action)
-                        Qvalue[(positon2,direction2)]=(actionsList,QvalueOld+math.pow(0.8,len(actionsList))*qvalue)
-                        if len(actionsList)<5:
-                            queue.push(successor2)
-        print self.maximumValue(Qvalue)
+                    successor= self.getSuccessor(successorOld, action)
+                    positon = successor.getAgentState(self.index).getPosition()
+                    x, y = positon
+                    positon = (int(x), int(y))
+                    if positonListnew.count(positon)<2:
 
-    def maximumValue(self,QvalueDict):
-        max=0
+                        positonListnew.append(positon)
+
+                        qvalue = self.getQValue(successorOld, action)
+
+                        if len(positonListnew) < 5:
+                            q=QvalueOld + math.pow(0.5, len(positonListnew)) * qvalue
+                            queue.push((positonListnew, q,
+                                       successor))
+                        if len(positonListnew)==5:
+
+                            Qvalue.append((copy.copy(positonListnew), QvalueOld + math.pow(0.7, len(positonListnew)) * qvalue,
+                                       successor))
+
+        history = self.observationHistory
+        historyLength=len(history)
+        if historyLength>=4:
+            direction0 = history[historyLength-1].getAgentState(self.index).getDirection()
+            # print direction0
+            direction1 = history[historyLength - 2].getAgentState(self.index).getDirection()
+            # print direction1
+            direction2 = history[historyLength - 3].getAgentState(self.index).getDirection()
+            # print direction2
+
+            if direction0==oppositeDirection2(direction1) and  direction0==direction2:
+                if state!= None and  state.getLegalActions(self.index)!=None :
+                    if direction2 in state.getLegalActions(self.index):
+
+                        return direction2
+
+                    return None
+
+        return self.maximumValue(Qvalue,state)
+
+    def maximumValue(self,QvalueDict,state):
+        max=-9999
         maxList=[];
-        for item in QvalueDict.values():
-            x,y=item
-            if y>max:
+        for item in QvalueDict:
+            x,y,z=item
+            x=copy.copy(x)
+            if y>max and len(x)>4:
                 max=y
-                maxList=copy.copy(x)
-        return(max,maxList)
+                maxList=x
+        # print (max,maxList)
+
+        # self.debugDraw(maxList,[1,0,0],True)
+        if len(maxList)==0:
+            return None
+
+        actionPositon = maxList[1]
+        postion = state.getAgentPosition(self.index)
+        x,y=postion
+        dx,dy=actionPositon
+        action= Actions.vectorToDirection((dx-x,dy-y))
+        return action
 
 def initialMapState(self, gameState):
   walls = gameState.getWalls()
@@ -592,6 +641,16 @@ def oppositeDirection(direction):
   if direction == 'W':
     return 'E'
 
+def oppositeDirection2(direction):
+  if direction=='North':
+    return 'South';
+  if direction == 'South':
+    return 'North'
+  if direction == 'East':
+    return 'West'
+  if direction == 'West':
+    return 'East'
+
 def checkNeighbor(self,walls,position,direction):
     i, j = position
 
@@ -612,57 +671,3 @@ def checkNeighbor(self,walls,position,direction):
 
     if isTunnel:
         self.endNew[(i, j)] = newDirection
-
-# def uniformCostSearchEvaluate(self, gameState, firstAction, searchDepth):
-
-#     #copy the state and take the first action
-#     firstState = GameState(gameState)
-#     # Find appropriate rules for the agent
-#     AgentRules.applyAction( firstState, firstAction, self.index )
-#     AgentRules.checkDeath(firstState, self.index)
-#     AgentRules.decrementTimer(firstState.data.agentStates[self.index])
-
-#     #Set up a queue and add the first state
-#     queue = PriorityQueue()
-#     vstd_states = util.Counter()
-#     vstd_states[firstState.getAgentPosition(self.index)] = 1
-#     queue.push((firstState,1), 0)
-
-#     maxValue = 0
-#     while not queue.isEmpty() and searchDepth > 0:
-#         searchDepth -= 1
-#         newState, depth = queue.pop()
-#         legalActions = newState.getLegalActions()
-
-        
-#         for action in legalActions:
-#             # Copy current state
-#             state = newState.deepCopy()
-#             if state == newState:
-#                 print "state is newState"
-#             if :
-                
-#             # Find appropriate rules for the agent
-#             AgentRules.applyAction( state, action, self.index )
-#             AgentRules.checkDeath(state, self.index)
-#             AgentRules.decrementTimer(state.data.agentStates[self.index])
-#             if not vstd_states[state.getAgentPosition(self.index)]:
-#                 vstd_states[state.getAgentPosition(self.index)] = 1
-
-#                 qValue, _ = self.computeValueActionFromQValues(state) 
-#                 qValue *= math.pow(self.discount,depth)
-#                 queue.push((state,depth+1), qValue)
-#                 print "Q:", qValue
-#                 if maxValue < qValue:
-#                     maxValue = qValue
-    
-#     return maxValue
-
-# class PriorityQueue2(PriorityQueue):
-#     def  __init__(self):
-#         self.__init__()
-    
-#     def popWVaue(self):
-#         (value, _, item) = heapq.heappop(self.heap)
-#         #  (_, item) = heapq.heappop(self.heap)
-#         return (item, value)
